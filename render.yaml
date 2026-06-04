@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: broka-api
+    runtime: docker
+    region: oregon
+    plan: free
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ANTHROPIC_API_KEY
+        sync: false          # Enter manually in Render dashboard
+      - key: DATABASE_URL
+        fromDatabase:
+          name: broka-db
+          property: connectionString
+      - key: ALLOWED_ORIGINS
+        value: https://your-app.codemagic.io  # Update after Codemagic deploy
+      - key: TOKEN_EXPIRE_MINUTES
+        value: "60"
+
+databases:
+  - name: broka-db
+    plan: free
+    region: oregon
