@@ -11,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../services/webrtc_service.dart';
 import '../main.dart';
 import '../services/api_service.dart';
+import '../services/notification_service.dart';
 import '../models/models.dart';
 import '../models/listing.dart';
 
@@ -33,6 +34,8 @@ class _NegotiationScreenState extends State<NegotiationScreen> {
   // Availability state
   bool? _itemAvailable;       // null = not checked, true = available, false = no
   bool  _availabilityChecked = false;
+  bool  _incomingCallShown   = false;  // guard: 3s poll must not stack dialogs
+  int   _serverMsgCount      = 0;      // # of messages last seen from server
 
   // Language compatibility
   String _buyerLang  = 'english';
@@ -69,10 +72,11 @@ class _NegotiationScreenState extends State<NegotiationScreen> {
     _heartbeatTimer = Timer.periodic(
         const Duration(seconds: 60), (_) => ApiService.updateLastSeen());
     ApiService.updateLastSeen();
-    // Poll for new direct messages every 3s (real-time feel without WebSocket)
+    // Poll every 3s (real-time feel without WebSocket). Runs in both modes so
+    // the buyer sees the seller's availability reply after the Zeno handshake.
     _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
       if (_listing != null && mounted) {
-        if (!_aiMode) _pollDirectMessages();
+        _pollNewMessages();
         _pollIncomingCall();
       }
     });
@@ -122,30 +126,54 @@ class _NegotiationScreenState extends State<NegotiationScreen> {
     super.dispose();
   }
 
-  // ── Availability Check ────────────────────────────────────────────────────
+  // ── Zeno Availability Handshake ───────────────────────────────────────────
+  // When the buyer opens the negotiation, Zeno greets them by name and offers
+  // to check availability with the seller first. On confirm, Zeno relays the
+  // availability question to the seller and reassures the buyer it will report
+  // back as soon as the seller responds.
+
+  String get _buyerFirstName {
+    final n = (ApiService.currentUserNickname ?? ApiService.currentUserName ?? '').trim();
+    if (n.isEmpty) return 'there';
+    return n.split(' ').first;
+  }
+
+  String get _sellerDisplayName => _listing?.sellerName ?? 'the seller';
 
   Future<void> _showAvailabilityCheck() async {
-    if (_availabilityChecked || _role == 'seller') return;
-    final result = await showDialog<bool>(
+    if (_availabilityChecked || _role == 'seller' || _listing == null) return;
+    _availabilityChecked = true;
+
+    // Zeno's opening words - shown to the buyer first thing.
+    final greeting =
+        'Hey $_buyerFirstName 👋 I can see you\'re interested in '
+        '${_listing!.name}. Should I ask the seller if it\'s still available?';
+
+    // Make Zeno's messages visible in the thread.
+    setState(() {
+      _aiMode = true;
+      _messages.add(Message(role: 'broker', content: greeting));
+    });
+    _scrollDown();
+
+    final confirmed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
         backgroundColor: BrokaColors.bgMid,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
-          side: const BorderSide(color: BrokaColors.neonBlue, width: 1),
+          side: const BorderSide(color: BrokaColors.neonPurple, width: 1),
         ),
         title: const Row(children: [
-          Text('🛒', style: TextStyle(fontSize: 22)),
+          Icon(Icons.auto_awesome_rounded, color: BrokaColors.neonPurple, size: 20),
           SizedBox(width: 10),
-          Text('Check Availability', style: TextStyle(
+          Text('Zeno', style: TextStyle(
               color: BrokaColors.textHigh, fontWeight: FontWeight.w800)),
         ]),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Text(
-            'Before starting your negotiation, would you like to first ask the seller if this item is still available?',
-            style: TextStyle(color: BrokaColors.textMid, height: 1.5),
-          ),
+          Text(greeting,
+              style: const TextStyle(color: BrokaColors.textMid, height: 1.5)),
           const SizedBox(height: 16),
           Container(
             padding: const EdgeInsets.all(12),
@@ -170,31 +198,73 @@ class _NegotiationScreenState extends State<NegotiationScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Skip', style: TextStyle(color: BrokaColors.textLow)),
+            child: const Text('Not now', style: TextStyle(color: BrokaColors.textLow)),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: BrokaColors.neonBlue,
+              backgroundColor: BrokaColors.neonPurple,
               foregroundColor: Colors.white,
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(10)),
             ),
-            child: const Text('Ask Seller', style: TextStyle(fontWeight: FontWeight.w800)),
+            child: const Text('Yes, ask the seller',
+                style: TextStyle(fontWeight: FontWeight.w800)),
           ),
         ],
       ),
     );
-    setState(() => _availabilityChecked = true);
-    if (result == true && mounted) {
-      _sendAvailabilityMessage();
+
+    if (confirmed == true && mounted) {
+      await _askSellerAvailability();
     }
   }
 
-  void _sendAvailabilityMessage() {
-    final question = 'Hi! Is this item still available?';
-    _msgCtrl.text = question;
-    _send();
+  /// Relays the availability question to the seller, then has Zeno reassure
+  /// the buyer that it has reached out and will report back.
+  Future<void> _askSellerAvailability() async {
+    final listing = _listing;
+    if (listing == null) return;
+
+    const question = 'Hi! Is this item still available?';
+
+    // Show the buyer's question in the thread immediately.
+    setState(() => _messages.add(const Message(role: 'buyer', content: question)));
+    _scrollDown();
+
+    // Deliver the question to the seller. The AI-mediated endpoint persists the
+    // buyer's message and notifies the seller; fall back to a direct message if
+    // the broker is unavailable so the seller still receives it.
+    try {
+      await ApiService.sendNegotiationMessage(
+        listingId:  listing.id,
+        senderRole: 'buyer',
+        senderId:   ApiService.currentUserId ?? 'anon',
+        content:    question,
+        buyerName:  ApiService.currentUserName,
+        buyerLat:   ApiService.currentUserLat,
+        buyerLng:   ApiService.currentUserLng,
+      );
+    } catch (_) {
+      await ApiService.sendDirectMessage(
+        listingId:  listing.id,
+        senderRole: 'buyer',
+        senderId:   ApiService.currentUserId ?? 'anon',
+        content:    question,
+      );
+    }
+
+    if (!mounted) return;
+
+    // Zeno reassures the buyer.
+    final reassurance =
+        'Perfect, $_buyerFirstName — I\'ve already contacted $_sellerDisplayName '
+        'to confirm availability. Sit tight; I\'ll let you know the moment they respond. 👍';
+    setState(() => _messages.add(Message(role: 'broker', content: reassurance)));
+    _scrollDown();
+
+    // We've shown our own question locally; don't let the poller re-append it.
+    await _syncServerCount();
   }
 
   // ── Language Check ────────────────────────────────────────────────────────
@@ -297,7 +367,11 @@ class _NegotiationScreenState extends State<NegotiationScreen> {
   Future<void> _loadHistory() async {
     try {
       final history = await ApiService.getNegotiationHistory(_listing!.id);
-      if (mounted) setState(() { _messages = history; _loading = false; });
+      if (mounted) setState(() {
+        _messages = history;
+        _serverMsgCount = history.length;
+        _loading = false;
+      });
       _scrollDown();
     } catch (_) {
       if (mounted) setState(() => _loading = false);
@@ -309,11 +383,17 @@ class _NegotiationScreenState extends State<NegotiationScreen> {
     try {
       final callInfo = await ApiService.checkIncomingCall(_listing!.id);
       if (!mounted) return;
-      if (callInfo != null && _role == 'seller') {
+      if (callInfo != null && _role == 'seller' && !_incomingCallShown) {
         final roomId    = callInfo['room_id'] as String?;
         final callerName = callInfo['caller_name'] as String? ?? 'Buyer';
         if (roomId != null) {
-          // Show incoming call dialog
+          _incomingCallShown = true;
+          // Notify with sound/heads-up so the seller notices even if not looking
+          NotificationService.instance.showIncomingCall(
+            callerName: callerName,
+            listingName: _listing?.name ?? 'your listing',
+          );
+          // Show incoming call dialog (reset guard when it closes either way)
           showDialog(
             context: context,
             barrierDismissible: false,
@@ -330,7 +410,10 @@ class _NegotiationScreenState extends State<NegotiationScreen> {
                   style: const TextStyle(color: BrokaColors.textMid)),
               actions: [
                 TextButton(
-                  onPressed: () => Navigator.pop(context),
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _incomingCallShown = false;  // allow re-prompt on next call
+                  },
                   child: const Text('Decline',
                       style: TextStyle(color: BrokaColors.danger)),
                 ),
@@ -343,11 +426,12 @@ class _NegotiationScreenState extends State<NegotiationScreen> {
                     Navigator.pop(context);
                     Navigator.pushNamed(context, '/voip-call', arguments: {
                       'roomId':      roomId,
+                      'userId':      ApiService.currentUserId ?? 'seller',
                       'isCaller':    false,
-                      'callerName':  callerName,
+                      'peerName':    callerName,
                       'listingName': _listing?.name ?? '',
                       'listingId':   _listing?.id ?? '',
-                    });
+                    }).then((_) => _incomingCallShown = false);
                   },
                 ),
               ],
@@ -358,15 +442,49 @@ class _NegotiationScreenState extends State<NegotiationScreen> {
     } catch (_) {}
   }
 
-  Future<void> _pollDirectMessages() async {
+  /// After an optimistic send (we already showed our own message + any AI
+  /// reply locally), advance the server counter to the server's current length
+  /// so the poller only appends messages that arrive AFTER this point - i.e.
+  /// the counterparty's replies, never duplicates of what we just showed.
+  Future<void> _syncServerCount() async {
+    try {
+      final history = await ApiService.getNegotiationHistory(_listing!.id);
+      if (mounted) _serverMsgCount = history.length;
+    } catch (_) {}
+  }
+
+  /// Append-only poll: pulls server history and appends only the messages we
+  /// haven't seen yet. This preserves client-side Zeno bubbles (the handshake)
+  /// that aren't persisted, and avoids wiping the thread on every tick.
+  Future<void> _pollNewMessages() async {
     try {
       final history = await ApiService.getNegotiationHistory(_listing!.id);
       if (!mounted) return;
-      // Only update if there are new messages
-      if (history.length != _messages.length) {
-        setState(() => _messages = history);
-        _scrollDown();
+      if (history.length <= _serverMsgCount) return;  // nothing new
+
+      final fresh = history.sublist(_serverMsgCount);
+      _serverMsgCount = history.length;
+
+      // Notify for the newest inbound message in this batch. In AI-mediated
+      // mode the counterparty's reply arrives as a broker message addressed to
+      // us, so a fresh broker message also counts as "they responded".
+      Message? inbound;
+      for (final m in fresh) {
+        if (m.isBroker || m.role != _role) inbound = m;
       }
+      if (inbound != null) {
+        final who = inbound.isBroker
+            ? 'Zeno'
+            : (_role == 'buyer' ? (_listing?.sellerName ?? 'Seller') : 'Buyer');
+        NotificationService.instance.showNewMessage(
+          fromName: who,
+          preview: inbound.content,
+          threadKey: 'thread_${_listing!.id}',
+        );
+      }
+
+      setState(() => _messages.addAll(fresh));
+      _scrollDown();
     } catch (_) {}
   }
 
@@ -419,6 +537,8 @@ class _NegotiationScreenState extends State<NegotiationScreen> {
       } catch (_) {}
     }
 
+    // Reconcile with server so the poller won't re-append what we just showed.
+    await _syncServerCount();
     if (mounted) setState(() => _sending = false);
   }
 
@@ -508,7 +628,7 @@ class _NegotiationScreenState extends State<NegotiationScreen> {
     if (confirm == true && mounted) {
       // Room ID: listing_id + buyer_id (unique per negotiation session)
       final buyerId  = ApiService.currentUserId ?? 'anon';
-      final roomId   = 'broka_\${listing.id}_\$buyerId';
+      final roomId   = 'broka_${listing.id}_$buyerId';
       // Notify seller via FCM before navigating (fire-and-forget, non-blocking)
       unawaited(ApiService.initiateCall(
         roomId:      roomId,

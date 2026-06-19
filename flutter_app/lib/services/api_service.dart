@@ -103,7 +103,7 @@ class ApiService {
     await prefs.setString('user_language', language);
     try {
       await http.patch(
-        Uri.parse('\$baseUrl/auth/language?language=\$language'),
+        Uri.parse('$baseUrl/auth/language?language=$language'),
         headers: _headers,
       );
     } catch (_) {}
@@ -112,7 +112,7 @@ class ApiService {
   static Future<void> enrollBiometric(String biometricType) async {
     try {
       await http.patch(
-        Uri.parse('\$baseUrl/auth/biometric-enroll?biometric_type=\$biometricType'),
+        Uri.parse('$baseUrl/auth/biometric-enroll?biometric_type=$biometricType'),
         headers: _headers,
       );
     } catch (_) {}
@@ -121,7 +121,7 @@ class ApiService {
   static Future<void> setLocationVisible(bool visible) async {
     try {
       await http.patch(
-        Uri.parse('\$baseUrl/auth/location-visibility?visible=\$visible'),
+        Uri.parse('$baseUrl/auth/location-visibility?visible=$visible'),
         headers: _headers,
       );
     } catch (_) {}
@@ -921,7 +921,7 @@ class ApiService {
   static Future<Map<String, dynamic>?> checkIncomingCall(String listingId) async {
     try {
       final response = await http.get(
-        Uri.parse('\$baseUrl/calls/pending/\$listingId'),
+        Uri.parse('$baseUrl/calls/pending/$listingId'),
         headers: _headers,
       ).timeout(const Duration(seconds: 3));
       if (response.statusCode == 200) {

@@ -6,7 +6,7 @@
 
 ## What is BROKA?
 
-BROKA is a mobile marketplace where every transaction is mediated by an AI broker powered by **Llama 3.3 70B via Groq**. Instead of haggling blindly, buyers and sellers negotiate through BROKA - an impartial AI that protects both parties and works toward a fair deal.
+BROKA is a mobile marketplace where every transaction is mediated by an AI broker powered by **Gemini 2.0 Flash** (primary, for strong multilingual African-language support) with **Llama 3.3 70B via Groq** as an automatic fallback. Instead of haggling blindly, buyers and sellers negotiate through BROKA - an impartial AI that protects both parties and works toward a fair deal.
 
 **3% transaction fee** covers escrow protection, fraud prevention, and verified payments.
 
@@ -18,7 +18,7 @@ BROKA is a mobile marketplace where every transaction is mediated by an AI broke
 |---|---|
 | Mobile app | Flutter (Dart) |
 | Backend API | FastAPI (Python) + async SQLAlchemy |
-| AI broker | Groq - llama-3.3-70b-versatile |
+| AI broker | Gemini 2.0 Flash (primary) · Groq llama-3.3-70b-versatile (fallback) |
 | Edge layer | Hono (Node.js) on Render |
 | Auth | JWT + `local_auth` biometrics |
 | CI/CD | GitHub Actions + Codemagic |
@@ -92,7 +92,7 @@ broka/
 │           ├── product_screen.dart
 │           ├── listing_map_screen.dart
 │           ├── ai_assistant_screen.dart
-│           └── xxeno_screen.dart
+│           └── zeno_screen.dart        # Zeno AI advisor (formerly xxeno)
 ├── src/index.js                    # Hono edge health layer
 └── .github/workflows/              # CI/CD
 ```
@@ -124,7 +124,8 @@ flutter run --dart-define=API_URL=https://your-backend.onrender.com
 
 | Variable | Description |
 |---|---|
-| `GROQ_API_KEY` | Your Groq API key (from console.groq.com) |
+| `GEMINI_API_KEY` | Your Google Gemini API key (primary AI broker; from aistudio.google.com) |
+| `GROQ_API_KEY` | Your Groq API key (automatic fallback; from console.groq.com) |
 | `DATABASE_URL` | PostgreSQL connection string (Render injects automatically) |
 | `SECRET_KEY` | JWT signing secret (generate: `openssl rand -hex 32`) |
 | `TOKEN_EXPIRE_MINUTES` | JWT expiry, default 60 |

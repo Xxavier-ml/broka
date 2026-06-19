@@ -73,8 +73,13 @@ class WebRtcService {
       await _initMic();
       await _createPc();
       await _connectWs();
-      if (isCaller && !_offerSent) {
-        await _sendOffer();
+      // NOTE: the caller must NOT send its SDP offer here - at this point the
+      // room may still be empty (the callee hasn't joined). An offer sent now
+      // is relayed to nobody and lost, leaving the call stuck on "Calling…".
+      // Instead we wait for the backend's "ready" signal (fired once BOTH
+      // peers are in the room) and send the offer from _onSignal(). We only
+      // flip the UI to "calling" so the caller sees feedback immediately.
+      if (isCaller) {
         _setState(CallState.calling);
       }
     } catch (e) {

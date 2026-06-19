@@ -64,6 +64,8 @@ class _ProductScreenState extends State<ProductScreen> {
       final info = await ApiService.getUserProfile(sid);
       if (mounted) setState(() => _sellerInfo = info);
     } catch (_) {}
+    // Now that seller credibility data is in, ask Zeno for its verdict.
+    if (mounted) _loadZenoComment();
   }
 
   @override
@@ -791,12 +793,12 @@ class _ProductScreenState extends State<ProductScreen> {
 
     try {
       final sellerName  = listing.sellerName ?? _sellerInfo?['name'] as String? ?? 'Seller';
-      final userName    = ApiService.currentUserPreferredName ?? ApiService.currentUserName ?? 'Buyer';
+      final userName    = ApiService.currentUserNickname ?? ApiService.currentUserName ?? 'Buyer';
       final lang        = ApiService.currentUserLanguage;
       final price       = listing.price;
       final diff        = _priceDiffPct;
       final credScore   = _credibilityScore;
-      final distKm      = _distKm;
+      final distKm      = _distanceKm;
 
       final prompt = '''You are Zeno, BROKA's AI financial guru for East African markets.
 Respond ONLY in $lang language.

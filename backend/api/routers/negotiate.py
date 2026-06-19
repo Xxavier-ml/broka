@@ -761,6 +761,8 @@ async def get_inbox(
             else:               last_seen_str = f"Active {secs2//86400}d ago"
 
         threads.append({
+            # Internal sort key (real timestamp); not part of the API contract.
+            "_sort_ts":           last_msg.created_at.timestamp() if last_msg.created_at else 0.0,
             "listing_id":         listing.id,
             "listing_name":       listing.name,
             "listing_category":   listing.category,
@@ -785,5 +787,9 @@ async def get_inbox(
             "my_role":            my_role,
         })
 
-    threads.sort(key=lambda x: x["time_ago"])
+    # Most-recent thread first. Sort by the real timestamp, NOT the human
+    # "time_ago" string (which sorts lexicographically and mis-orders threads).
+    threads.sort(key=lambda x: x["_sort_ts"], reverse=True)
+    for t in threads:
+        t.pop("_sort_ts", None)
     return threads

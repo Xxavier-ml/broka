@@ -25,6 +25,7 @@ dependencies:
   local_auth: ^2.1.8
   flutter_webrtc: ^0.11.0
   web_socket_channel: ^3.0.3
+  flutter_local_notifications: ^17.2.3
 
 dev_dependencies:
   flutter_test:
