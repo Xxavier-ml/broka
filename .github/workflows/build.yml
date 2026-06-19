@@ -1,0 +1,101 @@
+name: Build Broka APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.5'
+          channel: 'stable'
+          cache: true
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-v3-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: gradle-v3-
+
+      - name: Get packages
+        run: cd flutter_app && flutter pub get
+
+      - name: Generate Flutter kernel snapshot
+        run: |
+          cd flutter_app
+          flutter build apk --release --split-per-abi \
+            --dart-define=API_URL=https://broka-dbjd.onrender.com \
+            --no-pub || true
+
+      - name: Build APK via Gradle directly
+        run: |
+          cd flutter_app/android
+          ./gradlew assembleRelease \
+            -Pdart-defines=$(echo -n "API_URL=https://broka-dbjd.onrender.com" | base64) \
+            --no-daemon \
+            --stacktrace 2>&1 | tail -80
+          echo "=== APK files ==="
+          find .. -name "*.apk" 2>/dev/null
+
+      - name: Locate APK
+        id: find_apk
+        run: |
+          APK=$(find $GITHUB_WORKSPACE -name "*arm64-v8a*release*.apk" 2>/dev/null | head -1)
+          if [ -z "$APK" ]; then
+            APK=$(find $GITHUB_WORKSPACE -name "*release*.apk" 2>/dev/null | head -1)
+          fi
+          if [ -z "$APK" ]; then
+            APK=$(find $GITHUB_WORKSPACE -name "*.apk" 2>/dev/null | head -1)
+          fi
+          echo "apk_path=$APK" >> $GITHUB_OUTPUT
+          echo "Found: $APK"
+
+      - name: Verify APK exists
+        run: |
+          if [ ! -f "${{ steps.find_apk.outputs.apk_path }}" ]; then
+            echo "APK not found. All APKs:"
+            find $GITHUB_WORKSPACE -name "*.apk" 2>/dev/null
+            exit 1
+          fi
+          ls -lh "${{ steps.find_apk.outputs.apk_path }}"
+
+      - name: Delete previous release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete latest-release --yes --repo ${{ github.repository }} 2>/dev/null || true
+          git push --delete origin latest-release 2>/dev/null || true
+
+      - name: Create GitHub Release with APK
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create latest-release \
+            "${{ steps.find_apk.outputs.apk_path }}#broka-release.apk" \
+            --repo ${{ github.repository }} \
+            --title "Broka Latest Release" \
+            --notes "Auto-built from commit ${{ github.sha }}" \
+            --latest
