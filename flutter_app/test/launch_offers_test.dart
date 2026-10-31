@@ -292,12 +292,13 @@ void main() {
       expect(opened, isTrue);
     });
 
-    testWidgets('listing time-left row always shows, including no expiry', (tester) async {
+    testWidgets('listing time-left row always shows, including no deadline', (tester) async {
       await tester.pumpWidget(_host(const ListingTimeLeftRow(
         timeLeft: TimeLeft(status: 'unlimited', label: 'No expiry'),
       )));
       expect(find.byKey(const Key('listing-time-left-row')), findsOneWidget);
-      expect(find.textContaining('No expiry'), findsOneWidget);
+      // Uncelebrated on purpose: no infinity mark, no green promise.
+      expect(find.text('Still live · no deadline set on this listing'), findsOneWidget);
       expect(find.byKey(const Key('listing-time-left-renew')), findsNothing);
 
       var renewed = false;
@@ -410,6 +411,14 @@ void main() {
       expect(find.text('Last free slot — after this, store setup is paid.'), findsOneWidget);
     });
 
+    testWidgets('nobody in yet: be the first, not 0 of 50', (tester) async {
+      await tester.pumpWidget(_host(LaunchOffersCard(offers: _offers(
+        listingRemaining: 50, storeRemaining: 10,
+      ))));
+      expect(find.text('Be the first to claim yours'), findsNWidgets(2));
+      expect(find.textContaining('0 of 50 claimed'), findsNothing);
+    });
+
     testWidgets('claimed offer: calm confirmation, no bar, no CTA', (tester) async {
       await tester.pumpWidget(_host(const LaunchOffersCard(
         offers: LaunchOffers(
@@ -422,6 +431,77 @@ void main() {
       expect(find.text('Your free listing — claimed'), findsOneWidget);
       expect(find.byKey(const Key('launch-offers-progress-listing')), findsNothing);
       expect(find.text('Post free'), findsNothing);
+    });
+  });
+
+  group('home hero', () {
+    testWidgets('shows both offers first with live counts and CTAs', (tester) async {
+      var posted = false;
+      var opened = false;
+      await tester.pumpWidget(_host(LaunchOfferHomeHero(
+        offers: LaunchOffers(
+          listingFree: const LaunchOffer(
+            limit: 50, claimed: 0, remaining: 50,
+            freeDays: 60, eligible: true, alreadyClaimed: false, enabled: false),
+          storeFree: const LaunchOffer(
+            limit: 10, claimed: 0, remaining: 10,
+            freeDays: 60, eligible: true, alreadyClaimed: false, enabled: false),
+        ),
+        onPostListing: () => posted = true,
+        onOpenStore: () => opened = true,
+      )));
+      expect(find.byKey(const Key('launch-home-hero')), findsOneWidget);
+      expect(find.text('First 50 listings free · 50 left'), findsOneWidget);
+      expect(find.text('First 10 online stores free · 10 left'), findsOneWidget);
+      expect(find.byKey(const Key('launch-offers-urgent-pill')), findsNothing);
+
+      await tester.tap(find.byKey(const Key('launch-home-post')));
+      await tester.tap(find.byKey(const Key('launch-home-open')));
+      expect(posted, isTrue);
+      expect(opened, isTrue);
+    });
+
+    testWidgets('low stock turns urgent', (tester) async {
+      await tester.pumpWidget(_host(LaunchOfferHomeHero(
+        offers: LaunchOffers(
+          listingFree: const LaunchOffer(
+            limit: 50, claimed: 47, remaining: 3,
+            freeDays: 60, eligible: true, alreadyClaimed: false, enabled: false),
+          storeFree: const LaunchOffer(
+            limit: 10, claimed: 1, remaining: 9,
+            freeDays: 60, eligible: true, alreadyClaimed: false, enabled: false),
+        ),
+        onPostListing: () {},
+        onOpenStore: () {},
+      )));
+      expect(find.text('First 50 listings free · 3 left'), findsOneWidget);
+      expect(find.text('Almost gone'), findsOneWidget);
+    });
+
+    testWidgets('hides once both offers are gone or claimed', (tester) async {
+      await tester.pumpWidget(_host(LaunchOfferHomeHero(
+        offers: const LaunchOffers(
+          listingFree: LaunchOffer(
+              limit: 50, claimed: 50, remaining: 0, freeDays: 60, alreadyClaimed: false),
+          storeFree: LaunchOffer(
+              limit: 10, claimed: 10, remaining: 0, freeDays: 60, alreadyClaimed: false),
+        ),
+        onPostListing: () {},
+        onOpenStore: () {},
+      )));
+      expect(find.byKey(const Key('launch-home-hero')), findsNothing);
+
+      await tester.pumpWidget(_host(LaunchOfferHomeHero(
+        offers: const LaunchOffers(
+          listingFree: LaunchOffer(
+              limit: 50, claimed: 3, remaining: 47, freeDays: 60, alreadyClaimed: true),
+          storeFree: LaunchOffer(
+              limit: 10, claimed: 1, remaining: 9, freeDays: 60, alreadyClaimed: true),
+        ),
+        onPostListing: () {},
+        onOpenStore: () {},
+      )));
+      expect(find.byKey(const Key('launch-home-hero')), findsNothing);
     });
   });
 }

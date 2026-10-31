@@ -15,6 +15,161 @@ import '../domain/launch_offers.dart';
 
 enum LaunchOfferKind { listing, store }
 
+/// The launch offer where nobody can miss it: the first thing under Home's
+/// pinned header. Compact on purpose - two tappable rows with live counts
+/// and a claimed-so-far bar each - but impossible to scroll past without
+/// seeing. Shown only while at least one offer still has slots; a seller
+/// who already claimed both never sees it. Guests never see it either:
+/// the counts come from the authed launch-offers endpoint, and a static
+/// "first 50 free" with no live count could promise an exhausted offer.
+class LaunchOfferHomeHero extends StatelessWidget {
+  const LaunchOfferHomeHero({
+    super.key,
+    required this.offers,
+    required this.onPostListing,
+    required this.onOpenStore,
+  });
+
+  final LaunchOffers offers;
+  final VoidCallback onPostListing;
+  final VoidCallback onOpenStore;
+
+  @override
+  Widget build(BuildContext context) {
+    final showListing = offers.listingFree.shouldShow;
+    final showStore = offers.storeFree.shouldShow;
+    if (!showListing && !showStore) return const SizedBox.shrink();
+    final urgent = _isLow(offers.listingFree) || _isLow(offers.storeFree);
+    final accent = urgent ? BrokaColors.warning : BrokaColors.success;
+    return Container(
+      key: const Key('launch-home-hero'),
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: accent.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: accent.withOpacity(urgent ? 0.75 : 0.55), width: urgent ? 1.5 : 1),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(urgent ? Icons.local_fire_department_rounded : Icons.celebration_rounded,
+              color: accent, size: 20),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text('Launch offer — free to start',
+                style: TextStyle(color: BrokaColors.textHigh, fontSize: 14.5, fontWeight: FontWeight.w800)),
+          ),
+          if (urgent)
+            Container(
+              key: const Key('launch-offers-urgent-pill'),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: BrokaColors.warning.withOpacity(0.16),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: BrokaColors.warning.withOpacity(0.5)),
+              ),
+              child: const Text('Almost gone',
+                  style: TextStyle(
+                      color: BrokaColors.warning, fontSize: 10.5, fontWeight: FontWeight.w800)),
+            ),
+        ]),
+        if (showListing) ...[
+          const SizedBox(height: 10),
+          _HomeHeroRow(
+            icon: Icons.sell_rounded,
+            text: offers.listingFree.alreadyClaimed == true
+                ? 'Your free listing is claimed'
+                : 'First ${offers.listingFree.limit} listings free · ${offers.listingFree.remaining} left',
+            fraction: _fraction(offers.listingFree),
+            low: _isLow(offers.listingFree),
+            actionLabel: offers.listingFree.alreadyClaimed == true ? null : 'Post free',
+            onAction: onPostListing,
+            actionKey: const Key('launch-home-post'),
+          ),
+        ],
+        if (showStore) ...[
+          const SizedBox(height: 8),
+          _HomeHeroRow(
+            icon: Icons.storefront_rounded,
+            text: offers.storeFree.alreadyClaimed == true
+                ? 'Your free store is claimed'
+                : 'First ${offers.storeFree.limit} online stores free · ${offers.storeFree.remaining} left',
+            fraction: _fraction(offers.storeFree),
+            low: _isLow(offers.storeFree),
+            actionLabel: offers.storeFree.alreadyClaimed == true ? null : 'Open free',
+            onAction: onOpenStore,
+            actionKey: const Key('launch-home-open'),
+          ),
+        ],
+      ]),
+    );
+  }
+}
+
+double _fraction(LaunchOffer o) =>
+    o.limit <= 0 ? 0.0 : (o.claimed / o.limit).clamp(0.0, 1.0);
+
+class _HomeHeroRow extends StatelessWidget {
+  const _HomeHeroRow({
+    required this.icon,
+    required this.text,
+    required this.fraction,
+    required this.low,
+    this.actionLabel,
+    this.onAction,
+    this.actionKey,
+  });
+
+  final IconData icon;
+  final String text;
+  final double fraction;
+  final bool low;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+  final Key? actionKey;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = low ? BrokaColors.warning : BrokaColors.success;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Icon(icon, color: accent, size: 17),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(text,
+              style: const TextStyle(color: BrokaColors.textHigh, fontSize: 12.5, fontWeight: FontWeight.w700)),
+        ),
+        if (actionLabel != null) ...[
+          const SizedBox(width: 8),
+          TextButton(
+            key: actionKey,
+            onPressed: onAction,
+            style: TextButton.styleFrom(
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              backgroundColor: accent.withOpacity(0.16),
+              foregroundColor: accent,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: Text(actionLabel!, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12)),
+          ),
+        ],
+      ]),
+      const SizedBox(height: 6),
+      ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: LinearProgressIndicator(
+          value: fraction,
+          minHeight: 5,
+          backgroundColor: BrokaColors.textHigh.withOpacity(0.10),
+          valueColor: AlwaysStoppedAnimation<Color>(accent),
+        ),
+      ),
+    ]);
+  }
+}
+
 /// "First 50 listings free" / "First 10 stores free" for this user.
 class LaunchOfferBanner extends StatelessWidget {
   const LaunchOfferBanner({super.key, required this.offer, required this.kind});
@@ -267,7 +422,9 @@ class _OfferRow extends StatelessWidget {
               ? 'Last free slot — after this, $scarcityUnit is paid.'
               : low
                   ? 'Only ${offer.remaining} left — when they run out, $scarcityUnit is paid.'
-                  : '${offer.claimed} of ${offer.limit} claimed',
+                  : offer.claimed == 0
+                      ? 'Be the first to claim yours'
+                      : '${offer.claimed} of ${offer.limit} claimed',
           key: Key('launch-offers-scarcity-${scarcityUnit == 'posting' ? 'listing' : 'store'}'),
           style: TextStyle(
               color: low ? BrokaColors.warning : BrokaColors.textMid,
@@ -281,9 +438,9 @@ class _OfferRow extends StatelessWidget {
 }
 
 /// One listing's time left, ALWAYS shown on owner surfaces — including
-/// "No expiry", so a seller can tell a listing with no deadline from one
-/// whose deadline simply was not rendered. [onRenew] appears only when
-/// the deadline needs one (ending/offline and not store-covered).
+/// the no-deadline state, so a seller can tell a listing with no deadline
+/// from one whose deadline simply was not rendered. [onRenew] appears
+/// only when the deadline needs one (ending/offline and not store-covered).
 class ListingTimeLeftRow extends StatelessWidget {
   const ListingTimeLeftRow({super.key, required this.timeLeft, this.onRenew});
 
@@ -300,10 +457,16 @@ class ListingTimeLeftRow extends StatelessWidget {
           BrokaColors.success,
           'Live via your store plan — no listing fee, no own deadline',
         ),
+      // Deliberately uncelebrated: no infinity mark, no green. A listing
+      // with no deadline reads as "infinite", and that is exactly the
+      // complaint - so this state says only what is true (still up, no
+      // date set) in a neutral tone. Against a current backend it never
+      // appears for personal listings: creation always stamps a launch
+      // window, so they show a real countdown instead.
       TimeLeft(isUnlimited: true) => (
-          Icons.all_inclusive_rounded,
-          BrokaColors.success,
-          'No expiry — this listing stays live',
+          Icons.schedule_rounded,
+          BrokaColors.textMid,
+          'Still live · no deadline set on this listing',
         ),
       TimeLeft(isOffline: true) => (
           Icons.visibility_off_rounded,

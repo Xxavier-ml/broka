@@ -68,6 +68,10 @@ import '../features/traders/presentation/trader_list_screen.dart';
 import '../features/stores/presentation/store_list_screen.dart';
 import '../features/listings/domain/models/listing.dart' show BrokaListing;
 import '../features/listings/data/repositories/listings_repository.dart';
+import '../features/launch_offers/data/launch_offers_repository.dart';
+import '../features/launch_offers/domain/launch_offers.dart';
+import '../features/launch_offers/presentation/launch_offer_widgets.dart';
+import '../features/stores/presentation/store_entry.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -140,6 +144,47 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   BuyAgentRequest? _activeBuyAgentRequest;
 
+  // The launch offer, first thing under the header. Signed-in only: the
+  // counts come from the authed launch-offers endpoint, and a static
+  // "first 50 free" with no live count could promise an exhausted offer.
+  // Loaded on open and on pull-to-refresh, next to the feed - never
+  // blocking it (a failure just hides the hero).
+  LaunchOffers? _launchOffers;
+
+  Future<void> _loadLaunchOffers() async {
+    if (ApiService.currentUserId == null) return;
+    final result = await launchOffersRepository.offers();
+    if (!mounted) return;
+    result.fold(
+      onSuccess: (offers) => setState(() => _launchOffers = offers),
+      onFailure: (_, __) => setState(() => _launchOffers = null),
+    );
+  }
+
+  bool get _showLaunchHero {
+    final offers = _launchOffers;
+    if (offers == null) return false;
+    return offers.listingFree.shouldShow || offers.storeFree.shouldShow;
+  }
+
+  Future<void> _openSellFromHero() async {
+    final authed = await requireAuth(context, reason: _navReasons[2]);
+    if (!authed || !mounted) return;
+    Navigator.pushNamed(context, '/sell').then((_) {
+      if (mounted) {
+        _loadLaunchOffers();
+        setState(() => _feedRefreshNonce++);
+      }
+    });
+  }
+
+  Future<void> _openStoreFromHero() async {
+    final authed = await requireAuth(context, reason: _navReasons[2]);
+    if (!authed || !mounted) return;
+    await StoreEntry.open(context);
+    if (mounted) _loadLaunchOffers();
+  }
+
   // Design Journal Volume 6, Ch.9/Ch.29 (Appendix C). Variant A is the
   // full layout built across Phases 0-5 below; Variant B is a single
   // prominent search entry that hands straight off to the Advisor
@@ -208,6 +253,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     // data only once TrendingScreen/AuctionHouseScreen actually opens.
     // Calling their APIs here was work Home paid for and never used.
     _loadActiveBuyAgentRequest();
+    _loadLaunchOffers();
     // The Zeno CTA's breathing glow and its rotating message now live inside
     // _ZenoCompactCta (bottom of this file) instead of an AnimationController
     // owned here. A controller at this level drove a ~4-frames-per-second
@@ -233,6 +279,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _feedController.refresh(),
       _loadTopCategories(),
       _loadActiveBuyAgentRequest(),
+      _loadLaunchOffers(),
     ]);
   }
 
@@ -1125,14 +1172,26 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 // _buildDiscoveryRail), not Home content blocks. Location
                 // detection itself is untouched - this is a display
                 // composition change, not a functionality removal.
+                // The launch offer sits above everything: a new user must
+                // see it on opening the app, before any feed or rail.
+                if (_showLaunchHero)
+                  SliverToBoxAdapter(
+                    child: _Entrance(
+                        delay: const Duration(milliseconds: 0),
+                        child: LaunchOfferHomeHero(
+                          offers: _launchOffers!,
+                          onPostListing: _openSellFromHero,
+                          onOpenStore: _openStoreFromHero,
+                        )),
+                  ),
                 SliverToBoxAdapter(
                   child: _Entrance(
-                      delay: const Duration(milliseconds: 0),
+                      delay: const Duration(milliseconds: 60),
                       child: _buildDiscoveryRail()),
                 ),
                 SliverToBoxAdapter(
                   child: _Entrance(
-                      delay: const Duration(milliseconds: 60),
+                      delay: const Duration(milliseconds: 120),
                       child: _buildZenoCompactCta()),
                 ),
                 // Brief §12: the active Buy Agent section scrolls with
@@ -1141,7 +1200,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 if (_activeBuyAgentRequest != null)
                   SliverToBoxAdapter(
                     child: _Entrance(
-                        delay: const Duration(milliseconds: 100),
+                        delay: const Duration(milliseconds: 160),
                         child: _buildActiveBuyAgentSection()),
                   ),
                 // Can't be notified - said where it's seen, with what it
